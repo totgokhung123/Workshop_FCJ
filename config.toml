@@ -13,7 +13,6 @@ baseURL = "https://totgokhung123.github.io/Workshop_FCJ/"
   # Git hub repo link
   editURL = ""
   description = ""
-  
   author = "journeyoftheaverageguy@gmail.com"
   showVisitedLinks = true
   disableBreadcrumb = false
