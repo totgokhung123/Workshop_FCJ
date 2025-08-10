@@ -1,0 +1,155 @@
+trong quá trình tạo SQS thêm policy của S3 video vào: (videosense-upload-queue)
+{
+  "Version": "2012-10-17",
+  "Id": "__default_policy_ID",
+  "Statement": [
+    {
+      "Sid": "__owner_statement",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::905418067993:root"
+      },
+      "Action": "SQS:*",
+      "Resource": "arn:aws:sqs:ap-southeast-1:905418067993:videosense-upload-queue"
+    },
+    {
+      "Sid": "AllowS3SendMessage",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "s3.amazonaws.com"
+      },
+      "Action": "SQS:SendMessage",
+      "Resource": "arn:aws:sqs:ap-southeast-1:905418067993:videosense-upload-queue",
+      "Condition": {
+        "ArnEquals": {
+          "aws:SourceArn": "arn:aws:s3:::<tên-bucket-của-bạn>"
+        }
+      }
+    }
+  ]
+}
+-------------------------------------
+Tạo enviroment cho lambda lấy S3 (Presigner) :
+Mở AWS Console → Lambda → chọn function bạn đang dùng (chắc là presigner của bạn).
+
+Vào tab Configuration → chọn Environment variables.
+
+Click Edit → Add environment variable:
+
+Key: BUCKET_NAME
+
+Value: tên-bucket-của-bạn (ví dụ totgo1)
+
+Click Save.
+ code lambda:
+# lambda_presigner_safe.py
+import json
+import os
+import time
+import logging
+import boto3
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+s3 = boto3.client('s3')
+
+def lambda_handler(event, context):
+    logger.info("Event received: %s", event)
+
+    bucket = os.environ.get('BUCKET_NAME')
+    if not bucket or not isinstance(bucket, str) or bucket.strip() == "":
+        logger.error("Missing or invalid BUCKET_NAME environment variable.")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": "Missing BUCKET_NAME env var", "detail": "Set environment variable BUCKET_NAME to your S3 bucket name."})
+        }
+
+    # Lấy filename an toàn
+    filename = None
+    try:
+        # HTTP API (apigatewayv2) truyền query params vào event['queryStringParameters']
+        q = event.get('queryStringParameters') if isinstance(event, dict) else None
+        if q and isinstance(q, dict):
+            filename = q.get('filename')
+    except Exception as e:
+        logger.warning("Cannot read queryStringParameters: %s", e)
+
+    # Nếu không có filename, tạo tên mặc định
+    if not filename or not isinstance(filename, str):
+        filename = f"uploads/{int(time.time())}.mp4"
+    else:
+        filename = filename if filename.startswith('uploads/') else f"uploads/{filename}"
+
+    logger.info("Using bucket=%s key=%s", bucket, filename)
+
+    try:
+        url = s3.generate_presigned_url(
+            ClientMethod='put_object',
+            Params={'Bucket': bucket, 'Key': filename, 'ContentType': 'video/mp4'},
+            ExpiresIn=3600
+        )
+    except Exception as e:
+        logger.exception("Failed to create presigned URL")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": "Failed to create presigned URL", "detail": str(e)})
+        }
+
+    return {
+        "statusCode": 200,
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps({"upload_url": url, "key": filename})
+    }
+
+test code lambda:
+{
+  "queryStringParameters": {"filename": "test123.mp4"}
+}
+
+tạo API generate-upload-url
+tạo phương thức GET, POST
+
+Cách gắn policy (Console)
+Vào AWS Console → IAM → Roles.
+
+Tìm role Presigner-role-vq5i02ad (của lambda bạn tạo).
+
+Chọn tab Permissions → Add inline policy (hoặc Attach policies directly nếu tạo managed).
+
+Chọn tab JSON, dán policy trên, Review policy, đặt tên (ví dụ AllowS3PutUploads) → Create policy.
+code:
+{
+	"Version": "2012-10-17",
+	"Statement": [
+		{
+			"Sid": "AllowPutUploadPrefix",
+			"Effect": "Allow",
+			"Action": [
+				"s3:PutObject",
+				"s3:PutObjectAcl"
+			],
+			"Resource": "arn:aws:s3:::totgo1/uploads/*"
+		}
+	]
+}
+---------------------------------------------------
+#phương thức GET kiểm tra:
+$response = Invoke-RestMethod -Uri "https://lx7tj1p0jg.execute-api.ap-southeast-1.amazonaws.com/generate-upload-url?filename=test1234.mp4" -Method GET
+$uploadUrl = $response.upload_url
+# Hiện đầy đủ URL (không bị ...):
+Write-Host $uploadUrl
+# hoặc code python :
+import requests
+r = requests.get("https://lx7tj1p0jg.execute-api.ap-southeast-1.amazonaws.com/generate-upload-url?filename=test1234.mp4")
+upload_url = r.json()['upload_url']
+print(upload_url)
+
+with open(r"E:\AWS_FCJ\Hugo\video\test1234.mp4","rb") as f:
+    r2 = requests.put(upload_url, data=f, headers={"Content-Type":"video/mp4"})
+print(r2.status_code, r2.text)
+(Nếu báo 200 thì thành công)
+-------------------------------------------------
+#kiểm tra S3, và SQS
+aws s3api head-object --bucket totgo1 --key uploads/test1234.mp4 --region ap-southeast-1
+aws sqs receive-message --queue-url "https://sqs.ap-southeast-1.amazonaws.com/905418067993/videosense-upload-queue" --max-number-of-messages 1 --region ap-southeast-1
