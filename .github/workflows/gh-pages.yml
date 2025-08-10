@@ -23,5 +23,5 @@
          - name: Deploy
            uses: peaceiris/actions-gh-pages@v3
            with:
-             github_token: ${{ secrets.GITHUB_TOKEN }}
+             github_token: ${{ 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 }}  # Use the new secret here
              publish_dir: ./public
