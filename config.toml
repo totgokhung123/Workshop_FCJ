@@ -11,6 +11,7 @@ home = [ "HTML", "RSS", "JSON"]
   # Git hub repo link
   editURL = ""
   description = ""
+  baseURL = "https://totgokhung123.github.io/Workshop_FCJ/"
   author = "journeyoftheaverageguy@gmail.com"
   showVisitedLinks = true
   disableBreadcrumb = false
